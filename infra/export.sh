@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+mkdir -p dist-release
+docker image save -o dist-release/images.tar nachat-app:0.1.0 nachat-web:0.1.0 postgres:17.7-alpine redis:7.4.7-alpine
+cp compose.yaml compose.lan.yaml .env.example README.md dist-release/
+mkdir -p dist-release/infra
+cp infra/nginx.tls.conf infra/backup.sh infra/restore.sh dist-release/infra/
+docker compose images --format json > dist-release/images.json
+echo 'Package: dist-release (no secrets or user data included)'
