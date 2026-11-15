@@ -1,0 +1,134 @@
+NaChat Docker起動手順
+====================
+
+この手順はサーバーを起動する担当者向けです。
+社員はDockerを操作せず、案内されたURLをブラウザで開いてください。
+別のWindows PCへの新規導入は「Windows社内テスト手順.txt」を先に参照。
+
+1. このWindows PCで起動する
+---------------------------
+スタートメニューからDocker Desktopを起動し、起動完了を待ちます。
+PowerShellを開いて以下を実行します。
+
+  cd C:\work\NaChat
+  docker version
+  docker compose up -d
+  docker compose ps -a
+
+docker versionでClientとServerの両方が表示されれば準備完了です。
+app・db・redisがhealthy、proxyがUpになることを確認してください。
+migrateはDBの初期化・更新を終えるとExited (0)になります。これは正常です。
+
+このPCのブラウザで開くURL:
+  http://localhost:8080/
+
+初回管理者の情報:
+  C:\work\NaChat\.local\初回ログイン.txt
+
+初回ログイン時はパスワードを変更します。社員には管理画面から
+それぞれのアカウントを作成してください。管理者の情報は共有しません。
+
+2. 社内の別PCから利用する（HTTPS構成）
+--------------------------------------
+現在の通常起動はこのPC限定です。以下を準備してから社内公開します。
+開発時にこのPCで確認したIPv4は192.168.0.119です。設置先のIPではありません。IPが変わった場合は
+設定を更新してください。固定IPまたはDHCP予約を推奨します。
+
+必要な準備:
+  ・社内から接続できるサーバーIPまたはDNS名
+  ・そのIPまたはDNS名に対応し、社員PCが信頼するHTTPS証明書
+  ・ホストのTCP 443を社内ネットワークから許可する設定
+
+例: chat.example.internal を社内DNSに登録した場合
+（この名前は例です。実際に用意した社内名へ置き換えます。）
+
+  a. 以下のファイルを配置します。
+     certs/server.crt  : サーバー証明書
+     certs/server.key  : 秘密鍵
+     社内CAの場合は、社員PC側にもCAの信頼設定が必要です。
+
+  b. .envの次の項目を設定します。
+     ALLOWED_HOSTS=localhost,127.0.0.1,chat.example.internal
+     ORIGINS=https://chat.example.internal
+     SECURE_COOKIES=1
+
+     SECRET_KEYやPOSTGRES_PASSWORDは既存値を維持します。
+     IPでアクセスする場合はALLOWED_HOSTSとORIGINSもそのIPにし、
+     証明書にもそのIPが含まれている必要があります。
+
+  c. 以下で起動します。
+     docker compose -f compose.yaml -f compose.lan.yaml up -d --no-build --pull never
+     docker compose -f compose.yaml -f compose.lan.yaml ps -a
+
+  d. 社内の別PCのブラウザで開きます。
+     https://chat.example.internal/
+
+この構成では社内PCから接続でき、各自のアカウントでログインします。
+別PCでlocalhostを指定すると、その別PC自身につながるため使えません。
+社内に複数のネットワークがある場合は、それぞれからサーバーへ届く
+ルーティングとファイアウォールの許可をネットワーク担当者に確認します。
+インターネット向けのルーターのポート転送は不要です。
+
+HTTPS構成ではHTTPの8080ポートを443へ置き換えます。
+以後の起動・停止・状態確認も、両方のComposeファイルを指定してください。
+証明書が未配置のまま実行すると、Webサーバーは起動できません。
+社内への実公開は公開方式と証明書の準備が決まってから行います。
+
+3. 停止・再開
+--------------
+このPC内だけの構成:
+  docker compose stop
+  docker compose up -d
+
+社内HTTPS構成:
+  docker compose -f compose.yaml -f compose.lan.yaml stop
+  docker compose -f compose.yaml -f compose.lan.yaml up -d --no-build --pull never
+
+通常の停止で「docker compose down -v」は使用しないでください。
+-vを付けるとDBや添付の保存ボリュームも削除されます。
+
+4. 起動しないとき
+------------------
+Dockerへ接続できない:
+  Docker Desktopが起動しているか確認し、docker versionを再実行。
+
+appがhealthyにならない、migrateがExited (1)などになる:
+  docker compose logs --tail 100 app migrate db
+
+画面が開かない:
+  docker compose ps -a
+  docker compose logs --tail 100 proxy
+  接続先URL、ポート競合、ホストのファイアウォールを確認。
+
+HTTPS構成では上記のdocker composeにも
+「-f compose.yaml -f compose.lan.yaml」を付けてください。
+
+5. 別のLinuxホストへ持ち込む
+---------------------------
+Docker EngineとDocker Composeを用意します。
+初期対象はlinux/amd64、HTTPS用設定にはCompose 2.24.4以上が必要です。
+配布フォルダ一式（images.tar、Compose設定、infra、docsなど）をコピーし、
+そのフォルダで実行します。
+
+  docker load -i images.tar
+
+新規設置の場合は.env.exampleを.envへコピーし、SECRET_KEYと
+POSTGRES_PASSWORDを十分長いランダム値に変更します。
+PythonやNode.jsをホストへ追加する必要はありません。
+
+ホスト内での起動確認:
+  docker compose up -d --no-build --pull never
+
+最初の管理者作成（ユーザーのいない新規環境だけ）:
+  docker compose exec app python manage.py bootstrap
+
+社内公開は「2. 社内の別PCから利用する」のHTTPS設定を行ってください。
+既存環境を移す場合は、DBと添付のバックアップも復元します。
+images.tarには会話データ・添付・秘密情報は含まれていません。
+
+詳細:
+  README.md                 役割別の入口
+  docs/USER_GUIDE.md         社員の使い方
+  docs/ADMIN_GUIDE.md        アカウント管理
+  docs/SERVER_GUIDE.md       設置・バックアップ・復元・更新
+  docs/DEVELOPMENT.md        開発・配布方法

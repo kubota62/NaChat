@@ -1,0 +1,135 @@
+NaChat：別のWindows PCへ持ち込んで試す
+=====================================
+
+対象：社内でNaChatのサーバー役をするWindows PCの担当者。
+社員のPCにDockerをインストールする必要はありません。
+
+【今回できること・残っていること】
+・Windows Docker DesktopのLinuxコンテナで動作確認済みです。
+・配布一式から新規起動し、ホスト自身のブラウザで試せます。
+・別PCからのHTTPS接続には、ホストの固定IP、証明書の発行・配置、
+  社員のFirefoxへのCA登録、ファイアウォール設定が必要です。
+・証明書はまだ作成していません。配布物を置くだけで社内全員が
+  接続できる状態ではありません。既存の利用データも含まれません。
+
+1. 持っていくもの
+-----------------
+dist-releaseフォルダを丸ごとコピーしてください。
+images.tarだけではなく、compose.yaml、compose.lan.yaml、.env.example、
+infra、docs、各説明書も必要です。隠しファイルの.env.exampleも含めます。
+
+設置先の例：C:\NaChat
+その直下にcompose.yamlとimages.tarがある状態にします。
+
+2. 社内Windows PCの準備
+----------------------
+Docker Desktopをインストール・起動します。
+Linuxコンテナを動かすモードで使用してください。
+WSL 2などのDocker Desktop実行環境も必要です。
+この配布イメージはx64 PC向けです。Windows ServerやARM PCは
+今回の検証対象ではありません。
+
+PowerShellで確認：
+  docker version
+  docker compose version
+  docker info --format '{{.OSType}} / {{.Architecture}}'
+
+docker versionでServerも表示され、OSTypeがlinuxなら準備完了です。
+ホストはスリープしないようにしてください。
+
+3. 新規環境の初期設定
+--------------------
+PowerShellで以下を実行します。
+
+  cd C:\NaChat
+  docker load -i images.tar
+  powershell -ExecutionPolicy Bypass -File .\infra\initialize-config.ps1
+
+initialize-config.ps1は、この配布物に含まれる初期設定作成スクリプトです。
+新しい秘密情報を生成して.envを作ります。既存の.envは上書きしません。
+ExecutionPolicy BypassはこのPowerShellプロセスだけへの指定で、
+PC全体のポリシーは変更しません。会社の実行制限がある場合は担当者へ確認。
+
+既存データの移設ではこの新規手順ではなくバックアップ復元を使います。
+
+4. 起動して管理者を作る
+----------------------
+  docker compose up -d --no-build --pull never
+  docker compose ps -a
+
+app・db・redisがhealthy、proxyがUpになるのを待ちます。
+migrateのExited (0)は初期化成功です。
+
+  docker compose exec app python manage.py bootstrap
+
+メールアドレス、表示名、初期パスワードを対話形式で入力します。
+初期パスワードは12文字以上にしてください。
+ユーザーがすでに存在する環境ではbootstrapは実行できません。
+開発PCのadmin@nachat.localやそのパスワードは配布物には含まれません。
+
+ホスト自身のFirefoxから以下を開きます。
+  http://localhost:8080/
+
+作成した管理者でログインし、初回パスワードを変更してください。
+「設定」→「ユーザー管理」で試用する社員のアカウントを作成します。
+
+5. 社員の別PCから試すための準備
+------------------------------
+ホストでの起動が成功してから進めます。
+最初は社員PC 1台で確認してください。
+
+例：ネットワーク担当者が192.168.2.221をホスト用に確保した場合。
+このIPは例です。空いているように見えるIPを勝手に割り当てないでください。
+
+・192.168.2.221を証明書のIP SANに含むサーバー証明書を発行します。
+・certs/server.crtとcerts/server.keyに配置します。
+・社員へ配るのはCAの公開証明書だけです。秘密鍵は配りません。
+・社員のFirefoxにCAを信頼登録します。
+・.envの次の値を変更します。
+
+  ALLOWED_HOSTS=localhost,127.0.0.1,192.168.2.221
+  ORIGINS=https://192.168.2.221
+  SECURE_COOKIES=1
+
+SECRET_KEYやPOSTGRES_PASSWORDは変更しません。
+サーバー側のTCP 443を社内接続元に限定して許可します。
+VPNで接続する社員がいる場合はVPNの接続元範囲も確認してください。
+
+  docker compose -f compose.yaml -f compose.lan.yaml up -d --no-build --pull never
+  docker compose -f compose.yaml -f compose.lan.yaml ps -a
+
+社員PCのFirefoxで開くURL：
+  https://192.168.2.221/
+
+別PCからlocalhostは使えません。HTTPS構成に切り替えた後は、
+ホスト自身も証明書に合った上記IPで接続してください。
+証明書が未作成の状態では、このHTTPS起動手順は完了できません。
+ブラウザの警告が出る場合はCA登録、IPとの一致、有効期限を確認します。
+
+6. 確認する操作
+---------------
+・2人の別アカウントでログインできる。
+・チャンネル投稿が相手の画面に届く。
+・DMとスレッド返信が使える。
+・添付を送信・ダウンロードできる。
+・非公開チャンネルが非メンバーには見えない。
+・Docker再起動後も投稿と添付が残る。
+・VPN利用者がいる場合はVPN経由の接続も確認する。
+
+7. 停止・再開・困ったとき
+------------------------
+ホスト単体のHTTP構成：
+  docker compose stop
+  docker compose up -d --no-build --pull never
+  docker compose logs --tail 100 app proxy migrate db
+
+社内HTTPS構成：
+  docker compose -f compose.yaml -f compose.lan.yaml stop
+  docker compose -f compose.yaml -f compose.lan.yaml up -d --no-build --pull never
+  docker compose -f compose.yaml -f compose.lan.yaml logs --tail 100 app proxy migrate db
+
+down -vはデータを消すので通常の停止には使わないでください。
+配布物にソースコードはないため、--buildを付けずに起動します。
+起動しない場合はDockerの稼働、空き容量、ポート競合、.envを確認します。
+
+役割別の説明はREADME.md、詳しい運用はdocs/SERVER_GUIDE.mdを参照。
