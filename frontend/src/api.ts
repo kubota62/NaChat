@@ -1,6 +1,6 @@
-export type User={id:string;name:string;email:string;admin:boolean;must_change_password:boolean;active:boolean};
+export type User={id:string;name:string;avatar:string|null;email:string;admin:boolean;must_change_password:boolean;active:boolean};
 export type Room={id:string;name:string;kind:string;description:string;owner:string;version:string;unread:number;members:string[]};
-export type Message={id:string;room:string;sequence:string;parent:string|null;author:{id:string;name:string};body:string;deleted:boolean;created_at:string;edited:boolean;replies:number;reactions:{emoji:string;count:number;mine:boolean}[];attachments:{id:string;name:string;size:number}[]};
+export type Message={id:string;room:string;sequence:string;parent:string|null;author:{id:string;name:string;avatar:string|null};body:string;deleted:boolean;created_at:string;edited:boolean;replies:number;reactions:{emoji:string;count:number;mine:boolean}[];attachments:{id:string;name:string;size:number}[]};
 let csrf='';
 export async function api<T=any>(path:string,method='GET',data?:unknown):Promise<T>{
   if(method!=='GET'&&!csrf){const r=await fetch('/api/csrf');csrf=(await r.json()).csrf;}

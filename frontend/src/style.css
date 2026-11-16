@@ -3,3 +3,7 @@
 .attachment-preview{max-width:220px;max-height:150px;object-fit:contain;border-radius:5px}.attachment:has(.attachment-preview){flex-wrap:wrap;max-width:320px}
 
 .mentions-nav{justify-content:flex-start;margin:8px 22px 4px;color:#687c60;font-size:12px;gap:9px}
+
+.login-history form{margin:16px 0}.login-history>p{margin:12px 0}.login-entries article{border:1px solid #e4eadd;border-radius:8px;padding:14px;margin-top:12px}.login-entries header{display:flex;justify-content:space-between;gap:8px;font-size:11px;flex-wrap:wrap}.login-result{color:#805832}.login-result.success{color:#317866}.login-entries dl{font-size:11px;margin:12px 0 0}.login-entries dt{color:#77836e;margin-top:8px}.login-entries dd{margin:3px 0;overflow-wrap:anywhere;line-height:1.6}
+
+.avatar img{width:100%;height:100%;object-fit:cover;border-radius:inherit}.profile-image{border-bottom:1px solid #e4eadd;padding-bottom:22px;margin-bottom:22px}.profile-image h3{font-size:14px;margin:0 0 14px}.profile-image-preview{width:80px;height:80px;margin-bottom:16px;border-radius:16px;background:#e5e9da;display:flex;align-items:center;justify-content:center;font-size:32px;overflow:hidden}.profile-image-preview img{width:100%;height:100%;object-fit:cover}.profile-image .muted{margin:12px 0}.profile-image-buttons{display:flex;gap:16px}.profile-image-buttons .primary{width:auto}.profile-image-buttons button{font-size:12px}

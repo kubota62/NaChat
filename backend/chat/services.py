@@ -28,7 +28,7 @@ def message_data(message,user):
         item=reactions.setdefault(r.emoji,{'emoji':r.emoji,'count':0,'mine':False})
         item['count']+=1
         item['mine'] |= r.user_id==user.pk
-    return {'id':str(message.pk),'room':str(message.room_id),'sequence':str(message.sequence),'parent':str(message.parent_id) if message.parent_id else None,'author':{'id':str(message.author_id),'name':message.author.display_name},'body':'' if message.deleted else message.body,'deleted':message.deleted,'created_at':message.created_at.isoformat(),'edited':message.edited_at is not None,'replies':message.replies.count(),'reactions':list(reactions.values()) if not message.deleted else [],'attachments':[{'id':str(a.pk),'name':a.name,'size':a.size} for a in message.attachments.all()] if not message.deleted else []}
+    return {'id':str(message.pk),'room':str(message.room_id),'sequence':str(message.sequence),'parent':str(message.parent_id) if message.parent_id else None,'author':{'id':str(message.author_id),'name':message.author.display_name,'avatar':('/api/users/'+str(message.author_id)+'/avatar?v='+message.author.avatar.name.rsplit('/',1)[-1]) if message.author.avatar else None},'body':'' if message.deleted else message.body,'deleted':message.deleted,'created_at':message.created_at.isoformat(),'edited':message.edited_at is not None,'replies':message.replies.count(),'reactions':list(reactions.values()) if not message.deleted else [],'attachments':[{'id':str(a.pk),'name':a.name,'size':a.size} for a in message.attachments.all()] if not message.deleted else []}
 
 def messages():
     return Message.objects.select_related('author').prefetch_related('reactions','attachments')

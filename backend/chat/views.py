@@ -12,6 +12,7 @@ from django.shortcuts import get_object_or_404
 from django.middleware.csrf import get_token
 from django.utils import timezone
 from .models import User, Room, Membership, Message, ThreadRead, Reaction, Change, Attachment, Audit
+from .login_audit import record_login, connection_ip
 from .services import visible_rooms, can_read, changed, message_data, messages, unread
 
 def api(methods, public=False):
@@ -29,7 +30,7 @@ def api(methods, public=False):
         return run
     return wrap
 
-def user_data(u): return {'id':str(u.pk),'name':u.display_name,'email':u.email,'admin':u.is_staff,'must_change_password':u.must_change_password,'active':u.is_active}
+def user_data(u): return {'id':str(u.pk),'name':u.display_name,'avatar':('/api/users/'+str(u.pk)+'/avatar?v='+u.avatar.name.rsplit('/',1)[-1]) if u.avatar else None,'email':u.email,'admin':u.is_staff,'must_change_password':u.must_change_password,'active':u.is_active}
 def require_room(request,pk,lock=False):
     room=get_object_or_404(Room.objects.select_for_update() if lock else Room.objects,pk=pk)
     if not can_read(request.user,room): raise Http404()
@@ -46,13 +47,20 @@ def health(request): return JsonResponse({'status':'ok'})
 @api(['POST'],public=True)
 def sign_in(request):
     email=str(request.payload.get('email','')).strip().lower()
-    key='login:'+hashlib.sha256((request.META.get('REMOTE_ADDR','')+email).encode()).hexdigest()
-    if cache.get(key,0)>=10: return JsonResponse({'error':'試行回数の上限です。15分後にお試しください。'},status=429)
+    account=email
+    key='login:'+hashlib.sha256((connection_ip(request)+email).encode()).hexdigest()
+    if cache.get(key,0)>=10:
+        record_login(request,account,'rate_limited')
+        return JsonResponse({'error':'試行回数の上限です。15分後にお試しください。'},status=429)
     cache.add(key,0,900)
     cache.incr(key)
+    if email == 'administorator': email = 'admin@nachat.local'
     u=authenticate(request,username=email,password=request.payload.get('password',''))
-    if not u: return JsonResponse({'error':'メールアドレスまたはパスワードが違います。'},status=401)
+    if not u:
+        record_login(request,account,'failed')
+        return JsonResponse({'error':'ログインIDまたはパスワードが違います。'},status=401)
     cache.delete(key)
+    record_login(request,account,'success',u)
     login(request,u)
     return JsonResponse(user_data(u))
 @api(['POST'])
@@ -100,7 +108,7 @@ def manage_user(request,pk):
     if 'active' in request.payload: u.is_active=bool(request.payload['active'])
     if request.payload.get('password'):
         validate_password(request.payload['password'],u)
-        u.set_password(request.payload['password']); u.must_change_password=True
+        u.set_password(request.payload['password']); u.must_change_password=False
     u.save()
     Audit.objects.create(actor=request.user,action='user_updated',target=str(u.pk))
     return JsonResponse(user_data(u))
@@ -250,4 +258,64 @@ def attachment(request,pk):
     response['Content-Security-Policy']="default-src 'none'; sandbox"
     response['X-Content-Type-Options']='nosniff'
     response['Cache-Control']='private, no-store'
+    return response
+
+
+@api(['GET'])
+def login_history(request):
+    if not request.user.is_staff:
+        return JsonResponse({'error':'管理者のみ閲覧できます。'},status=403)
+    qs=Audit.objects.filter(action__in=['login_success','login_failed','login_rate_limited'])
+    account=request.GET.get('account','').strip()[:254]
+    result=request.GET.get('result','')
+    if account: qs=qs.filter(details__account__icontains=account)
+    if result:
+        if result not in ['success','failed','rate_limited']: raise ValueError()
+        qs=qs.filter(action='login_'+result)
+    before=request.GET.get('before','')
+    if before:
+        cursor=int(before)
+        if cursor < 1 or cursor > 9223372036854775807: raise ValueError()
+        qs=qs.filter(pk__lt=cursor)
+    rows=list(qs.order_by('-pk')[:51])
+    return JsonResponse({'logs':[{
+        'id':str(row.pk),'time':row.created_at.isoformat(),
+        'result':row.action.removeprefix('login_'),
+        'account':row.details.get('account',''),
+        'name':row.details.get('display_name',''),
+        'ip':row.details.get('ip',''),
+        'user_agent':row.details.get('user_agent',''),
+    } for row in rows[:50]],'next':str(rows[49].pk) if len(rows)>50 else None})
+
+
+@api(['POST','DELETE'])
+def profile_avatar(request):
+    from .profile import prepare_avatar
+    image=prepare_avatar(request.FILES.get('avatar')) if request.method=='POST' else None
+    with transaction.atomic():
+        user=User.objects.select_for_update().get(pk=request.user.pk)
+        old_name=user.avatar.name
+        storage=user.avatar.storage
+        if image:
+            user.avatar.save(image.name,image,save=False)
+        else:
+            user.avatar=''
+        user.save(update_fields=['avatar'])
+        Audit.objects.create(actor=user,action='avatar_updated' if image else 'avatar_removed',target=str(user.pk))
+        if old_name:
+            transaction.on_commit(lambda: storage.delete(old_name))
+    return JsonResponse(user_data(user))
+
+
+@api(['GET'])
+def user_avatar(request,pk):
+    user=get_object_or_404(User,pk=pk)
+    if not user.avatar: raise Http404()
+    try:
+        stream=user.avatar.open('rb')
+    except FileNotFoundError:
+        raise Http404()
+    response=FileResponse(stream,content_type='image/jpeg')
+    response['Cache-Control']='private, no-store'
+    response['X-Content-Type-Options']='nosniff'
     return response

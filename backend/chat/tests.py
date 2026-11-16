@@ -53,14 +53,122 @@ class ChatTests(TestCase):
         Membership.objects.create(room=self.room,user=self.b)
         self.client.force_login(self.b)
         self.assertEqual(self.client.delete('/api/messages/'+m['id']).status_code,403)
-    def test_first_password_gate_and_session_revocation(self):
+    def test_optional_password_change_and_session_revocation(self):
         self.a.must_change_password=True;self.a.save()
-        self.assertEqual(self.client.get('/api/rooms').status_code,403)
+        self.assertEqual(self.client.get('/api/rooms').status_code,200)
         r=self.post('password',{'current':'Testing!Password12','password':'Different!Password34'})
         self.assertEqual(r.status_code,200)
         self.assertEqual(self.client.get('/api/rooms').status_code,200)
         self.a.refresh_from_db();self.a.set_password('Reset!Password56');self.a.save()
         self.assertEqual(self.client.get('/api/rooms').status_code,401)
+    def test_admin_alias_and_eight_character_passwords(self):
+        admin=User.objects.create_superuser('admin@nachat.local','administorator',display_name='管理者')
+        self.client.logout()
+        self.assertEqual(self.post('login',{'email':'administorator','password':'incorrect'}).status_code,401)
+        r=self.post('login',{'email':'administorator','password':'administorator'})
+        self.assertEqual(r.status_code,200)
+        self.assertEqual(r.json()['name'],'管理者')
+        self.assertFalse(r.json()['must_change_password'])
+        self.assertEqual(self.client.get('/api/rooms').status_code,200)
+        data={'email':'new@example.test','name':'New','password':'Q7!zR2@'}
+        self.assertEqual(self.post('users',data).status_code,400)
+        data['password']='Q7!zR2@x'
+        r=self.post('users',data)
+        self.assertEqual(r.status_code,201)
+        self.assertFalse(r.json()['must_change_password'])
+        uid=r.json()['id']
+        self.assertEqual(self.post('users/'+uid,{'password':'T8!vS3#'}).status_code,400)
+        self.assertFalse(self.post('users/'+uid,{'password':'T8!vS3#y'}).json()['must_change_password'])
+        self.client.logout()
+        self.assertEqual(self.post('login',{'email':data['email'],'password':'T8!vS3#y'}).status_code,200)
+        self.assertEqual(self.client.get('/api/rooms').status_code,200)
+        self.assertEqual(self.post('password',{'current':'T8!vS3#y','password':'V9@kL4!'}).status_code,400)
+        self.assertEqual(self.post('password',{'current':'T8!vS3#y','password':'V9@kL4!n'}).status_code,200)
+
+    def test_login_audit_success_failure_limit_and_no_secrets(self):
+        from .models import Audit
+        from django.core.management import call_command
+        self.client.logout()
+        headers={'HTTP_X_REAL_IP':'192.168.2.42','HTTP_X_FORWARDED_FOR':'203.0.113.99','HTTP_USER_AGENT':'Firefox test'}
+        def attempt(password):
+            return self.client.post('/api/login',json.dumps({'email':self.a.email,'password':password}),content_type='application/json',**headers)
+        self.assertEqual(attempt('Testing!Password12').status_code,200)
+        row=Audit.objects.get(action='login_success')
+        self.assertEqual(row.actor_id,self.a.pk)
+        self.assertEqual(row.details['ip'],'192.168.2.42')
+        self.assertEqual(row.details['user_agent'],'Firefox test')
+        self.assertEqual(row.details['display_name'],'Alice')
+        self.client.logout()
+        for _ in range(10): self.assertEqual(attempt('Wrong!Secret').status_code,401)
+        self.assertEqual(attempt('Wrong!Secret').status_code,429)
+        self.assertEqual(Audit.objects.filter(action='login_failed',actor=None).count(),10)
+        self.assertEqual(Audit.objects.filter(action='login_rate_limited').count(),1)
+        out=io.StringIO()
+        call_command('login_logs',account=self.a.email,stdout=out)
+        lines=out.getvalue().splitlines()
+        self.assertEqual(len(lines),12)
+        self.assertEqual(json.loads(lines[0])['result'],'rate_limited')
+        self.assertNotIn('Wrong!Secret',out.getvalue())
+        self.assertNotIn('Testing!Password12',out.getvalue())
+        self.assertNotIn('session',out.getvalue())
+
+    def test_login_history_admin_only_filter_and_pagination(self):
+        from .models import Audit
+        self.client.logout()
+        self.assertEqual(self.client.get('/api/login-history').status_code,401)
+        self.client.force_login(self.a)
+        self.assertEqual(self.client.get('/api/login-history').status_code,403)
+        self.a.is_staff=True;self.a.save()
+        for i in range(52):
+            Audit.objects.create(action='login_success',details={'account':'alice@example.test','ip':'192.168.2.42'})
+        Audit.objects.create(action='login_failed',details={'account':'bob@example.test'})
+        Audit.objects.create(action='password_changed',details={})
+        page=self.client.get('/api/login-history').json()
+        self.assertEqual(len(page['logs']),50)
+        tail=self.client.get('/api/login-history',{'before':page['next']}).json()
+        self.assertEqual(len(tail['logs']),3)
+        self.assertIsNone(tail['next'])
+        self.assertFalse({r['id'] for r in page['logs']} & {r['id'] for r in tail['logs']})
+        filtered=self.client.get('/api/login-history',{'account':'BOB','result':'failed'}).json()
+        self.assertEqual(len(filtered['logs']),1)
+        self.assertEqual(filtered['logs'][0]['account'],'bob@example.test')
+        self.assertEqual(self.client.get('/api/login-history?result=invalid').status_code,400)
+        self.assertEqual(self.client.get('/api/login-history?before=invalid').status_code,400)
+
+    def test_profile_image_upload_access_validation_and_delete(self):
+        from PIL import Image
+        from django.core.files.storage import default_storage
+        picture=io.BytesIO();Image.new('RGB',(500,300),'red').save(picture,format='PNG')
+        self.assertEqual(self.client.post('/api/profile/avatar',{'avatar':SimpleUploadedFile('x.svg',b'<svg/>')}).status_code,400)
+        self.assertEqual(self.client.post('/api/profile/avatar',{'avatar':SimpleUploadedFile('big.png',b'x'*(5*1024*1024+1))}).status_code,400)
+        response=self.client.post('/api/profile/avatar',{'avatar':SimpleUploadedFile('profile.png',picture.getvalue()),'user':self.b.pk})
+        self.assertEqual(response.status_code,200)
+        self.a.refresh_from_db();self.b.refresh_from_db()
+        self.assertTrue(self.a.avatar)
+        self.assertFalse(self.b.avatar)
+        with self.a.avatar.open('rb') as image:
+            result=Image.open(image)
+            self.assertEqual(result.size,(256,256));self.assertEqual(result.format,'JPEG')
+        url=response.json()['avatar']
+        self.client.logout();self.assertEqual(self.client.get(url).status_code,401)
+        self.client.force_login(self.b)
+        response=self.client.get(url)
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response['Cache-Control'],'private, no-store')
+        self.assertTrue(b''.join(response.streaming_content).startswith(b'\xff\xd8'))
+        self.client.force_login(self.a)
+        old=self.a.avatar.name
+        with self.captureOnCommitCallbacks(execute=True):
+            response=self.client.post('/api/profile/avatar',{'avatar':SimpleUploadedFile('next.png',picture.getvalue())})
+        self.assertEqual(response.status_code,200)
+        self.assertNotEqual(response.json()['avatar'],url)
+        self.assertFalse(default_storage.exists(old))
+        self.a.refresh_from_db();old=self.a.avatar.name
+        with self.captureOnCommitCallbacks(execute=True):
+            self.assertIsNone(self.client.delete('/api/profile/avatar').json()['avatar'])
+        self.assertFalse(default_storage.exists(old))
+        self.assertEqual(self.client.get(url).status_code,404)
+
     def test_thread_unread_separate_and_never_regresses(self):
         root=self.message().json()
         reply=self.message('reply',parent=root['id']).json()

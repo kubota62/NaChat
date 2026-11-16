@@ -14,7 +14,7 @@ class Updates(AsyncJsonWebsocketConsumer):
         s=Session.objects.filter(session_key=key,expire_date__gt=timezone.now()).first()
         if not s: return False
         data=s.get_decoded()
-        u=User.objects.filter(pk=data.get('_auth_user_id'),is_active=True,must_change_password=False).first()
+        u=User.objects.filter(pk=data.get('_auth_user_id'),is_active=True).first()
         if not u or not constant_time_compare(data.get('_auth_user_hash',''),u.get_session_auth_hash()): return False
         if room_id:
             room=Room.objects.filter(pk=room_id).first()

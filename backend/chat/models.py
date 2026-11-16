@@ -15,7 +15,8 @@ class User(AbstractUser):
     username = None
     email = models.EmailField(unique=True)
     display_name = models.CharField(max_length=80)
-    must_change_password = models.BooleanField(default=True)
+    avatar = models.FileField(upload_to="avatars/", blank=True)
+    must_change_password = models.BooleanField(default=False)
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['display_name']
     objects = UserManager()
@@ -85,6 +86,7 @@ class Attachment(models.Model):
     size = models.BigIntegerField()
 
 class Audit(models.Model):
+    details = models.JSONField(default=dict, blank=True)
     actor = models.ForeignKey(User,null=True,on_delete=models.SET_NULL)
     action = models.CharField(max_length=80)
     target = models.CharField(max_length=100)

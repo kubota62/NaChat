@@ -1,0 +1,11 @@
+# Local-only restore verification. Use with compose.yaml, without compose.lan.yaml.
+# Docker Compose 2.24.4+ required for !override.
+services:
+  app:
+    environment:
+      ALLOWED_HOSTS: localhost,127.0.0.1
+      ORIGINS: http://localhost:18080,http://127.0.0.1:18080
+      SECURE_COOKIES: '0'
+  proxy:
+    ports: !override
+      - '127.0.0.1:18080:80'

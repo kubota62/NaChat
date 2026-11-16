@@ -3,8 +3,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p dist-release
 docker image save -o dist-release/images.tar nachat-app:0.1.0 nachat-web:0.1.0 postgres:17.7-alpine redis:7.4.7-alpine
-cp compose.yaml compose.lan.yaml .env.example README.md ARCHITECTURE.md DESIGN_REVIEW.md VALIDATION.md dist-release/
-cp Docker起動手順.txt Windows社内テスト手順.txt dist-release/
+cp compose.yaml compose.lan.yaml compose.restore-check.yaml .env.example README.md ARCHITECTURE.md DESIGN_REVIEW.md VALIDATION.md dist-release/
+cp Docker起動手順.txt Windows社内テスト手順.txt バックアップと復元手順.txt dist-release/
 mkdir -p dist-release/docs
 cp docs/*.md dist-release/docs/
 mkdir -p dist-release/infra
